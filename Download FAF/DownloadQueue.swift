@@ -41,6 +41,14 @@ struct QueueItem: Identifiable {
 
     var message: String?
 
+    var completedAt: Date?
+
+    var filePath: String?
+
+    var fileSize: Int64?
+
+    var temporaryDirectory: String?
+
 }
 
 @MainActor
@@ -52,11 +60,17 @@ final class DownloadQueue: ObservableObject {
     private var sessions: [UUID: DownloadSession] = [:]
 
     private let history: DownloadHistoryStore
+    private let notify: @MainActor (UUID, String, Bool) async -> Void
 
     let maximumConcurrent = 3
 
-    init(history: DownloadHistoryStore) {
-
+    init(
+        history: DownloadHistoryStore,
+        notify: @escaping @MainActor (UUID, String, Bool) async -> Void = { id, title, succeeded in
+            await DownloadNotifications.shared.send(id: id, title: title, succeeded: succeeded)
+        }
+    ) {
+        self.notify = notify
         self.history = history
 
     }
@@ -144,11 +158,16 @@ final class DownloadQueue: ObservableObject {
     func retry(_ id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }),
               items[index].phase == .failed else { return }
+        cleanupTemporaryFiles(for: items[index])
+        items[index].temporaryDirectory = nil
         items[index].phase = .queued
         items[index].progress = 0
         items[index].speed = "—"
         items[index].eta = "—"
         items[index].message = nil
+        items[index].completedAt = nil
+        items[index].filePath = nil
+        items[index].fileSize = nil
         schedule()
     }
 
@@ -158,8 +177,42 @@ final class DownloadQueue: ObservableObject {
 
               [.completed, .cancelled, .failed].contains(items[index].phase) else { return }
 
+        let item = items[index]
+        if item.phase == .failed || item.phase == .cancelled {
+            cleanupTemporaryFiles(for: item)
+        }
         items.remove(at: index)
 
+    }
+
+    func moveCompletedToTrash(_ id: UUID) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              items[index].phase == .completed,
+              let path = items[index].filePath else {
+            throw NSError(domain: "DownloadFAF", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "The completed file could not be located."])
+        }
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw NSError(domain: "DownloadFAF", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "The file is no longer on this Mac."])
+        }
+        var trashedURL: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &trashedURL)
+        for entry in history.items where entry.filePath == path {
+            history.remove(entry.id)
+        }
+        items.remove(at: index)
+    }
+
+    private func cleanupTemporaryFiles(for item: QueueItem) {
+        guard let path = item.temporaryDirectory else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        let parent = URL(fileURLWithPath: item.job.folder, isDirectory: true).standardizedFileURL
+        guard directory.deletingLastPathComponent() == parent,
+              directory.lastPathComponent.hasPrefix(".DownloadFAF-Partial-"),
+              (try? directory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { return }
+        try? FileManager.default.removeItem(at: directory)
     }
 
     private func schedule() {
@@ -180,8 +233,23 @@ final class DownloadQueue: ObservableObject {
 
               items[index].phase == .queued else { return }
 
-        let item = items[index]
+        var item = items[index]
+        let tempURL = URL(fileURLWithPath: item.job.folder, isDirectory: true)
+            .appendingPathComponent(".DownloadFAF-Partial-\(id.uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: tempURL, withIntermediateDirectories: true)
+        } catch {
+            items[index].phase = .failed
+            items[index].message = "Cannot create temporary download folder: \(error.localizedDescription)"
+            schedule()
+            return
+        }
+        items[index].temporaryDirectory = tempURL.path
+        item = items[index]
+        var arguments = item.job.arguments
+        arguments.insert(contentsOf: ["-P", "temp:\(tempURL.path)"], at: max(0, arguments.count - 1))
 
+        let runArguments = arguments
         let session = DownloadSession()
 
         sessions[id] = session
@@ -192,7 +260,7 @@ final class DownloadQueue: ObservableObject {
 
             let result = await Task.detached(priority: .userInitiated) {
 
-                VideoEngine.run(arguments: item.job.arguments, session: session) { fraction, speed, eta in
+                VideoEngine.run(arguments: runArguments, session: session) { fraction, speed, eta in
 
                     Task { @MainActor [weak self] in
 
@@ -229,6 +297,8 @@ final class DownloadQueue: ObservableObject {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
 
         let item = items[index]
+        // Only a running attempt may transition to a terminal state once.
+        guard [.downloading, .paused, .cancelling].contains(item.phase) else { return }
 
         sessions.removeValue(forKey: id)
 
@@ -246,7 +316,17 @@ final class DownloadQueue: ObservableObject {
 
             items[index].progress = 1
 
-            saveHistory(for: item, output: output)
+            items[index].completedAt = Date()
+            if let file = completedFile(from: output) {
+                items[index].filePath = file.path
+                items[index].fileSize = file.size
+                history.add(DownloadHistoryItem(
+                    id: UUID(), title: item.title, uploader: item.uploader,
+                    thumbnail: item.thumbnail, quality: item.job.qualityName,
+                    format: item.job.format, filePath: file.path,
+                    completedAt: items[index].completedAt!, fileSize: file.size
+                ))
+            }
 
         } else {
 
@@ -256,39 +336,29 @@ final class DownloadQueue: ObservableObject {
 
         }
 
+        if cancelled || success {
+            cleanupTemporaryFiles(for: items[index])
+        }
+
+        if !cancelled {
+            let notificationID = UUID()
+            Task {
+                await notify(notificationID, item.title, success)
+            }
+        }
         schedule()
 
     }
 
-    private func saveHistory(for item: QueueItem, output: String) {
-
-        guard let marker = output.range(of: "FAF_FINAL_PATH:", options: .backwards) else { return }
-
+    private func completedFile(from output: String) -> (path: String, size: Int64)? {
+        guard let marker = output.range(of: "FAF_FINAL_PATH:", options: .backwards) else { return nil }
         let path = String(output[marker.upperBound...])
-
             .components(separatedBy: .newlines).first?
-
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
-
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return nil }
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-
         let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-
-        history.add(DownloadHistoryItem(
-
-            id: UUID(), title: item.title, uploader: item.uploader,
-
-            thumbnail: item.thumbnail, quality: item.job.qualityName,
-
-            format: item.job.format, filePath: path,
-
-            completedAt: Date(), fileSize: size
-
-        ))
-
+        return (path, size)
     }
 
 }
-

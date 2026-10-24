@@ -291,8 +291,40 @@ nonisolated final class DownloadSession: @unchecked Sendable {
     }
 }
 nonisolated enum VideoEngine {
-    static let tool = "/opt/homebrew/bin/yt-dlp"
-    static let ffmpeg = "/opt/homebrew/bin/ffmpeg"
+    private static let searchDirectories: [String] = {
+        let home = NSHomeDirectory()
+        let inherited = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":").map(String.init)
+        return Array(Set([
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+            home + "/.local/bin", home + "/bin"
+        ] + inherited)).sorted()
+    }()
+
+    private static func locate(_ name: String) -> String? {
+        for directory in searchDirectories {
+            let path = (directory as NSString).appendingPathComponent(name)
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        return nil
+    }
+
+    static var toolPath: String? { locate("yt-dlp") }
+    static var ffmpegPath: String? { locate("ffmpeg") }
+    static var tool: String { toolPath ?? "" }
+    static var ffmpeg: String { ffmpegPath ?? "" }
+
+    static var processEnvironment: [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let current = environment["PATH"] ?? ""
+        environment["PATH"] = (searchDirectories + [current]).joined(separator: ":")
+        return environment
+    }
+
+    static let missingYTDLP = "yt-dlp was not found. Install it using Homebrew: brew install yt-dlp"
+    static let missingFFmpeg = "ffmpeg was not found. Install it using Homebrew: brew install ffmpeg"
     static func verifySizes(
         in info: VideoInfo
     ) async -> VideoInfo {
@@ -442,11 +474,19 @@ nonisolated enum VideoEngine {
         progress: @escaping @Sendable (Double, String, String) -> Void
     ) -> (Bool, String) {
         if session.isCancelled { return (false, "Cancelled") }
+        guard let ytDLP = toolPath else { return (false, missingYTDLP) }
+        guard let ffmpegExecutable = ffmpegPath else { return (false, missingFFmpeg) }
 
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = arguments
+        process.executableURL = URL(fileURLWithPath: ytDLP)
+        var resolvedArguments = arguments
+        if let index = resolvedArguments.firstIndex(of: "--ffmpeg-location"),
+           resolvedArguments.indices.contains(index + 1) {
+            resolvedArguments[index + 1] = ffmpegExecutable
+        }
+        process.arguments = resolvedArguments
+        process.environment = processEnvironment
         process.standardOutput = pipe
         process.standardError = pipe
 
