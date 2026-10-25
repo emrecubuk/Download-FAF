@@ -10,5 +10,3 @@ equires yt-dlp and ffmpeg:
 ```bash
 brew install yt-dlp ffmpeg
 ```
-
-**v1.0.0**
