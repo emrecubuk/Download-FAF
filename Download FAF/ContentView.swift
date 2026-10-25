@@ -116,6 +116,7 @@ struct ContentView: View {
     @State private var pendingRemoval: UUID?
     @State private var removalError: String?
     @State private var page: Page = .home
+    @ObservedObject private var sharedAnalysis = SharedAnalysisState.shared
     @State private var videoURL = ""
     @State private var video: VideoInfo?
     @State private var analyzedURL = ""
@@ -130,9 +131,8 @@ struct ContentView: View {
     @StateObject private var queue: DownloadQueue
 
     init() {
-        let store = DownloadHistoryStore()
-        _history = StateObject(wrappedValue: store)
-        _queue = StateObject(wrappedValue: DownloadQueue(history: store))
+        _history = StateObject(wrappedValue: DownloadServices.shared.history)
+        _queue = StateObject(wrappedValue: DownloadServices.shared.queue)
     }
 
     private var downloadsVisible: Bool {
@@ -193,6 +193,18 @@ struct ContentView: View {
         .frame(minWidth: 640, maxWidth: .infinity, minHeight: 260, maxHeight: .infinity)
         .background(colorScheme == .dark ? Color(nsColor: .underPageBackgroundColor) : Color(red: 0.965, green: 0.972, blue: 0.984))
         .foregroundStyle(Color.primary)
+        .onAppear(perform: receiveSharedAnalysis)
+        .onReceive(sharedAnalysis.$video.dropFirst()) { _ in
+            DispatchQueue.main.async { receiveSharedAnalysis() }
+        }
+        .onReceive(sharedAnalysis.$format.dropFirst()) { _ in
+            DispatchQueue.main.async { receiveSharedAnalysis() }
+        }
+        .onReceive(sharedAnalysis.$qualityHeight.dropFirst()) { _ in
+            DispatchQueue.main.async { receiveSharedAnalysis() }
+        }
+        .onChange(of: format) { _, _ in publishSelection() }
+        .onChange(of: selectedHeight) { _, _ in publishSelection() }
         .confirmationDialog("Delete Download?", isPresented: Binding(
             get: { pendingRemoval != nil },
             set: { if !$0 { pendingRemoval = nil } }
@@ -223,7 +235,17 @@ struct ContentView: View {
             Text(removalError ?? "")
         }
         .onAppear {
-            resetFormatToDefault()
+            if sharedAnalysis.video == nil { resetFormatToDefault() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .downloadFAFOpenPage)) { notification in
+            guard let destination = notification.object as? String else { return }
+            switch destination {
+            case "downloads":
+                hasRevealedDownloads = true
+                page = .downloads
+            case "settings": page = .settings
+            default: page = .home
+            }
         }
         .onChange(of: saveHistory) { _, enabled in
             if !enabled && isHistoryPage(page) { page = .home }
@@ -481,6 +503,7 @@ struct ContentView: View {
 
                         if !isAudio {
                             Picker("Quality", selection: $selectedHeight) {
+                                Text("Unavailable").tag(nil as Int?)
                                 ForEach(qualities) { quality in
                                     Text("\(quality.name) · \(quality.sizeText)")
                                         .tag(Optional(quality.height))
@@ -718,8 +741,28 @@ struct ContentView: View {
 
     }
 
-    private func analyze() {
+    private func receiveSharedAnalysis() {
+        guard let info = sharedAnalysis.video else { return }
+        analyzedURL = sharedAnalysis.url
+        videoURL = sharedAnalysis.url
+        video = info
+        format = sharedAnalysis.format
+        selectedTab = ["MP3", "M4A"].contains(format) ? 1 : 0
+        let available = info.qualities(for: format)
+        let requested = sharedAnalysis.qualityHeight
+        selectedHeight = available.first(where: { $0.height == requested })?.height ?? available.first?.height
+        analyzeError = nil
+        isAnalyzing = false
+    }
 
+    private func publishSelection() {
+        guard video != nil, analyzedURL == sharedAnalysis.url else { return }
+        guard sharedAnalysis.format != format || sharedAnalysis.qualityHeight != selectedHeight else { return }
+        sharedAnalysis.updateSelection(format: format, qualityHeight: selectedHeight)
+    }
+
+    private func analyze() {
+        
         guard let link = validLink() else {
 
             analyzeError = "Please enter a valid video URL."
@@ -771,10 +814,17 @@ struct ContentView: View {
             analyzeError = result.error
 
             selectedHeight = result.info?
-
                 .qualities(for: format)
-
                 .first?.height
+
+            if let info = result.info {
+                sharedAnalysis.publish(
+                    url: link,
+                    video: info,
+                    format: format,
+                    qualityHeight: selectedHeight
+                )   
+            }
 
         }
 
@@ -858,13 +908,7 @@ struct ContentView: View {
 
             )
 
-            let verified = await VideoEngine.verifySizes(
-
-                in: info
-
-            )
-
-            return (verified, nil)
+            return (info, nil)
 
         } catch {
 
@@ -943,6 +987,7 @@ struct ContentView: View {
             arguments: arguments
         )
         queue.add(job: job, info: info)
+        sharedAnalysis.clear()
         revealDownloadsAfterAcceptance()
         videoURL = ""
         video = nil
@@ -958,3 +1003,4 @@ struct ContentView: View {
     ContentView()
 
 }
+

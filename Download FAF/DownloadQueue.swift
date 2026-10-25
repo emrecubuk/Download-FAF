@@ -60,19 +60,22 @@ final class DownloadQueue: ObservableObject {
     private var sessions: [UUID: DownloadSession] = [:]
 
     private let history: DownloadHistoryStore
-    private let notify: @MainActor (UUID, String, Bool) async -> Void
-
+    private let notify: @MainActor (UUID, String, Bool, String?) async -> Void
     let maximumConcurrent = 3
 
     init(
         history: DownloadHistoryStore,
-        notify: @escaping @MainActor (UUID, String, Bool) async -> Void = { id, title, succeeded in
-            await DownloadNotifications.shared.send(id: id, title: title, succeeded: succeeded)
+        notify: @escaping @MainActor (UUID, String, Bool, String?) async -> Void = { id, title, succeeded, thumbnail in
+            await DownloadNotifications.shared.send(
+                id: id,
+                title: title,
+                succeeded: succeeded,
+                thumbnailURL: thumbnail
+            )
         }
     ) {
         self.notify = notify
         self.history = history
-
     }
 
     var activeCount: Int {
@@ -343,8 +346,7 @@ final class DownloadQueue: ObservableObject {
         if !cancelled {
             let notificationID = UUID()
             Task {
-                await notify(notificationID, item.title, success)
-            }
+                await notify(notificationID, item.title, success, item.thumbnail)            }
         }
         schedule()
 
@@ -361,4 +363,18 @@ final class DownloadQueue: ObservableObject {
         return (path, size)
     }
 
+}
+
+
+@MainActor
+final class DownloadServices {
+    static let shared = DownloadServices()
+    let history: DownloadHistoryStore
+    let queue: DownloadQueue
+
+    private init() {
+        let store = DownloadHistoryStore()
+        history = store
+        queue = DownloadQueue(history: store)
+    }
 }

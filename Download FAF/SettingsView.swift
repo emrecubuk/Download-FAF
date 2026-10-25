@@ -9,6 +9,7 @@ enum AppPreferences {
     static let completionNotifications = "DownloadFAF.CompletionNotifications"
     static let failureNotifications = "DownloadFAF.FailureNotifications"
     static let theme = "DownloadFAF.Theme"
+    static let keepInMenuBar = "DownloadFAF.KeepInMenuBar"
 
     static func enabled(_ key: String, defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: key) as? Bool ?? true
@@ -142,25 +143,104 @@ final class DownloadNotifications: NSObject, UNUserNotificationCenterDelegate {
         return allowed
     }
 
-    func send(id: UUID, title: String, succeeded: Bool) async {
-        let key = succeeded ? AppPreferences.completionNotifications : AppPreferences.failureNotifications
+    func send(
+        id: UUID,
+        title: String,
+        succeeded: Bool,
+        thumbnailURL: String? = nil
+    ) async {
+        let key = succeeded
+            ? AppPreferences.completionNotifications
+            : AppPreferences.failureNotifications
+
         guard AppPreferences.enabled(key) else { return }
+
         configure()
-        guard await authorizeIfNeeded(), AppPreferences.enabled(key) else { return }
+
+        guard await authorizeIfNeeded(),
+              AppPreferences.enabled(key) else { return }
+
         let content = UNMutableNotificationContent()
-        content.title = succeeded ? "Download Complete" : "Download Failed"
+
+        content.title = succeeded
+            ? "Download Complete"
+            : "Download Failed"
+
         content.body = succeeded
             ? "\(title.isEmpty ? "Your download" : title) finished successfully."
             : "\(title.isEmpty ? "Your download" : title) could not be downloaded. Open Downloads for details or to retry."
+
         content.sound = .default
+
+        if succeeded,
+           let thumbnailURL,
+           let url = URL(string: thumbnailURL),
+           ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+
+            do {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 10
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+
+                guard let response = response as? HTTPURLResponse,
+                      (200...299).contains(response.statusCode),
+                      data.count <= 5_000_000,
+                      let image = NSImage(data: data),
+                      let tiff = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let jpeg = bitmap.representation(
+                        using: .jpeg,
+                        properties: [.compressionFactor: 0.85]
+                      )
+                else {
+                    throw NSError(
+                        domain: "DownloadFAF",
+                        code: 1,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "Invalid thumbnail image."
+                        ]
+                    )
+                }
+
+                let attachmentURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(
+                        "DownloadFAF-\(id.uuidString).jpg"
+                    )
+
+                try jpeg.write(to: attachmentURL, options: .atomic)
+
+                let attachment = try UNNotificationAttachment(
+                    identifier: "video-thumbnail",
+                    url: attachmentURL
+                )
+
+                content.attachments = [attachment]
+
+            } catch {
+                logger.warning(
+                    "Thumbnail attachment failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
         do {
             try await UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: id.uuidString, content: content, trigger: nil)
+                UNNotificationRequest(
+                    identifier: id.uuidString,
+                    content: content,
+                    trigger: nil
+                )
             )
+
             lastError = nil
+
         } catch {
             lastError = "A download notification could not be delivered: \(error.localizedDescription)"
-            logger.error("Delivery failed: \(error.localizedDescription, privacy: .public)")
+
+            logger.error(
+                "Delivery failed: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -180,6 +260,7 @@ struct SettingsView: View {
     @AppStorage(AppPreferences.completionNotifications) private var completionNotifications = true
     @AppStorage(AppPreferences.failureNotifications) private var failureNotifications = true
     @AppStorage(AppPreferences.theme) private var theme: AppTheme = .system
+    @AppStorage(AppPreferences.keepInMenuBar) private var keepInMenuBar = false
     @State private var loginEnabled = false
     @State private var loginBusy = false
     @State private var loginMessage: String?
@@ -197,109 +278,11 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                section("General", icon: "gearshape") {
-                    row("Launch at Login", description: "Automatically launch Download FAF when you log in to your Mac.") {
-                        Toggle("Launch at Login", isOn: Binding(
-                            get: { loginEnabled },
-                            set: { value in Task { await setLoginEnabled(value) } }
-                        ))
-                        .labelsHidden()
-                        .disabled(loginBusy)
-                    }
-                    if let loginMessage { status(loginMessage) }
-                    if loginNeedsApproval {
-                        Button("Open Login Items Settings") { SMAppService.openSystemSettingsLoginItems() }
-                    }
-                }
-                section("Privacy & Storage", icon: "lock.shield") {
-                    row("Save Download History", description: "Keep a record of your completed downloads.") {
-                        Toggle("Save Download History", isOn: $saveHistory).labelsHidden()
-                    }
-                    Divider()
-                    row("Clear Download History", description: "Remove saved download records without deleting downloaded files.") {
-                        Button("Clear Download History") { confirmHistory = true }
-                    }
-                    Divider()
-                    row("Clear Cache", description: "Clear cached network responses used by the application.") {
-                        Button("Clear Cache") { confirmCache = true }
-                            .disabled(isClearingCache)
-                    }
-                }
-                section("Notifications", icon: "bell") {
-                    row("Completion Notifications", description: "Notify me when a download finishes successfully.") {
-                        Toggle("Completion Notifications", isOn: $completionNotifications).labelsHidden()
-                    }
-                    Divider()
-                    row("Failure Notifications", description: "Notify me when a download fails.") {
-                        Toggle("Failure Notifications", isOn: $failureNotifications).labelsHidden()
-                    }
-                    status(notifications.permissionMessage)
-                    if let error = notifications.lastError { status(error) }
-                }
-                section("Dependencies", icon: "shippingbox") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("yt-dlp").font(.system(size: 13, weight: .medium))
-                                Text(dependencies.ytDLPStatus).font(.system(size: 11)).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: VideoEngine.toolPath == nil ? "xmark.circle" : "checkmark.circle.fill")
-                                .foregroundStyle(VideoEngine.toolPath == nil ? Color.secondary : Color.green)
-                        }
-                        HStack(spacing: 10) {
-                            Button("Install") { Task { await dependencies.install("yt-dlp") } }
-                                .disabled(dependencies.ytDLPBusy || dependencies.ytDLPInstalledByBrew)
-                            Button("Check & Update") { Task { await dependencies.checkAndUpdate("yt-dlp") } }
-                        }
-                        .disabled(dependencies.ytDLPBusy)
-                        if dependencies.ytDLPBusy { ProgressView().controlSize(.small) }
-                        status(dependencies.ytDLPMessage)
-                    }
-                    Divider()
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("FFmpeg").font(.system(size: 13, weight: .medium))
-                                Text(dependencies.ffmpegStatus).font(.system(size: 11)).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: VideoEngine.ffmpegPath == nil ? "xmark.circle" : "checkmark.circle.fill")
-                                .foregroundStyle(VideoEngine.ffmpegPath == nil ? Color.secondary : Color.green)
-                        }
-                        HStack(spacing: 10) {
-                            Button("Install") { Task { await dependencies.install("ffmpeg") } }
-                                .disabled(dependencies.ffmpegBusy || dependencies.ffmpegInstalledByBrew)
-                            Button("Check & Update") { Task { await dependencies.checkAndUpdate("ffmpeg") } }
-                        }
-                        .disabled(dependencies.ffmpegBusy)
-                        if dependencies.ffmpegBusy { ProgressView().controlSize(.small) }
-                        status(dependencies.ffmpegMessage)
-                    }
-                    status("Homebrew manages installations and updates. Existing tools outside Homebrew are preserved.")
-                }
-                section("Appearance", icon: "circle.lefthalf.filled") {
-                    row("Theme", description: "Choose how Download FAF appears.") {
-                        Picker("Theme", selection: Binding(
-                            get: { theme },
-                            set: { newTheme in
-                                guard newTheme != theme else { return }
-                                NotificationCenter.default.post(
-                                    name: .downloadFAFThemeWillChange,
-                                    object: nil
-                                )
-                                theme = newTheme
-                            }
-                        )) {
-                            ForEach(AppTheme.allCases) { item in
-                                Text(item.rawValue).tag(item)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 110)
-                    }
-
-                }
+                generalSection
+                privacySection
+                notificationsSection
+                dependenciesSection
+                appearanceSection
             }
             .padding(12)
         }
@@ -359,6 +342,125 @@ struct SettingsView: View {
         }
     }
 
+    private var generalSection: some View {
+        section("General", icon: "gearshape") {
+            row("Launch at Login", description: "Automatically launch Download FAF when you log in to your Mac.") {
+                Toggle("Launch at Login", isOn: Binding(
+                    get: { loginEnabled },
+                    set: { value in Task { await setLoginEnabled(value) } }
+                ))
+                .labelsHidden()
+                .disabled(loginBusy)
+            }
+
+            // Login item feedback belongs to Launch at Login, not Keep in Menu Bar.
+            if let loginMessage {
+                status(loginMessage)
+            }
+            if loginNeedsApproval {
+                Button("Open Login Items Settings") {
+                    SMAppService.openSystemSettingsLoginItems()
+                }
+            }
+
+            Divider()
+
+            row("Keep in Menu Bar", description: "Keep Download FAF available for quick downloads after closing its window.") {
+                Toggle("Keep in Menu Bar", isOn: $keepInMenuBar)
+                    .labelsHidden()
+            }
+        }
+    }
+
+    private var privacySection: some View {
+        section("Privacy & Storage", icon: "lock.shield") {
+                    row("Save Download History", description: "Keep a record of your completed downloads.") {
+                        Toggle("Save Download History", isOn: $saveHistory).labelsHidden()
+                    }
+                    Divider()
+                    row("Clear Download History", description: "Remove saved download records without deleting downloaded files.") {
+                        Button("Clear Download History") { confirmHistory = true }
+                    }
+                    Divider()
+                    row("Clear Cache", description: "Clear cached network responses used by the application.") {
+                        Button("Clear Cache") { confirmCache = true }
+                            .disabled(isClearingCache)
+                    }
+                }
+    }
+
+    private var notificationsSection: some View {
+        section("Notifications", icon: "bell") {
+                    row("Completion Notifications", description: "Notify me when a download finishes successfully.") {
+                        Toggle("Completion Notifications", isOn: $completionNotifications).labelsHidden()
+                    }
+                    Divider()
+                    row("Failure Notifications", description: "Notify me when a download fails.") {
+                        Toggle("Failure Notifications", isOn: $failureNotifications).labelsHidden()
+                    }
+                    status(notifications.permissionMessage)
+                    if let error = notifications.lastError { status(error) }
+                }
+    }
+
+    private var dependenciesSection: some View {
+        section("Dependencies", icon: "shippingbox") {
+            row("yt-dlp", description: dependencies.ytDLPStatus) {
+                Image(systemName: VideoEngine.toolPath == nil ? "xmark.circle" : "checkmark.circle.fill")
+                    .foregroundStyle(VideoEngine.toolPath == nil ? Color.secondary : Color.green)
+            }
+            HStack(spacing: 10) {
+                Button("Install") { Task { await dependencies.install("yt-dlp") } }
+                    .disabled(dependencies.ytDLPBusy || dependencies.ytDLPInstalledByBrew)
+                Button("Check & Update") { Task { await dependencies.checkAndUpdate("yt-dlp") } }
+                    .disabled(dependencies.ytDLPBusy)
+                if dependencies.ytDLPBusy { ProgressView().controlSize(.small) }
+            }
+            status(dependencies.ytDLPMessage)
+
+            Divider()
+
+            row("FFmpeg", description: dependencies.ffmpegStatus) {
+                Image(systemName: VideoEngine.ffmpegPath == nil ? "xmark.circle" : "checkmark.circle.fill")
+                    .foregroundStyle(VideoEngine.ffmpegPath == nil ? Color.secondary : Color.green)
+            }
+            HStack(spacing: 10) {
+                Button("Install") { Task { await dependencies.install("ffmpeg") } }
+                    .disabled(dependencies.ffmpegBusy || dependencies.ffmpegInstalledByBrew)
+                Button("Check & Update") { Task { await dependencies.checkAndUpdate("ffmpeg") } }
+                    .disabled(dependencies.ffmpegBusy)
+                if dependencies.ffmpegBusy { ProgressView().controlSize(.small) }
+            }
+            status(dependencies.ffmpegMessage)
+            status("Homebrew manages installations and updates. Existing tools outside Homebrew are preserved.")
+        }
+    }
+
+    private var appearanceSection: some View {
+        section("Appearance", icon: "circle.lefthalf.filled") {
+                    row("Theme", description: "Choose how Download FAF appears.") {
+                        Picker("Theme", selection: Binding(
+                            get: { theme },
+                            set: { newTheme in
+                                guard newTheme != theme else { return }
+                                NotificationCenter.default.post(
+                                    name: .downloadFAFThemeWillChange,
+                                    object: nil
+                                )
+                                theme = newTheme
+                            }
+                        )) {
+                            ForEach(AppTheme.allCases) { item in
+                                Text(item.rawValue).tag(item)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 110)
+                    }
+
+                }
+    }
+
     private func section<Content: View>(_ title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Label(title, systemImage: icon)
@@ -402,7 +504,9 @@ struct SettingsView: View {
         case .requiresApproval:
             loginMessage = "Launch at Login is not enabled. Allow Download FAF in macOS Login Items."
         case .notFound:
-            loginMessage = "macOS could not find this login item. Install a properly signed app in Applications and try again."
+            // A missing login item is normal for an Xcode development build.
+            // Do not show an error until the user actually tries to enable it.
+            loginMessage = nil
         default:
             loginMessage = nil
         }
@@ -419,7 +523,7 @@ struct SettingsView: View {
                 } else if SMAppService.mainApp.status != .enabled {
                     try SMAppService.mainApp.register()
                 }
-            } else {
+            } else if SMAppService.mainApp.status == .enabled {
                 try await SMAppService.mainApp.unregister()
             }
             refreshLoginStatus()
@@ -429,4 +533,5 @@ struct SettingsView: View {
         }
     }
 }
+
 

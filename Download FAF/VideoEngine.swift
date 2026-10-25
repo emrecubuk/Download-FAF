@@ -302,14 +302,29 @@ nonisolated enum VideoEngine {
     }()
 
     private static func locate(_ name: String) -> String? {
-        let managed = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DownloadFAF/Tools").appendingPathComponent(name).path
-        if FileManager.default.isExecutableFile(atPath: managed) { return managed }
+        let homebrewPath = "/opt/homebrew/bin/\(name)"
+
+        if FileManager.default.isExecutableFile(atPath: homebrewPath) {
+            return homebrewPath
+        }
+
+        let managed = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/DownloadFAF/Tools")
+            .appendingPathComponent(name)
+            .path
+
+        if FileManager.default.isExecutableFile(atPath: managed) {
+            return managed
+        }
+
         for directory in searchDirectories {
             let path = (directory as NSString).appendingPathComponent(name)
+
             if FileManager.default.isExecutableFile(atPath: path) {
                 return path
             }
         }
+
         return nil
     }
 
