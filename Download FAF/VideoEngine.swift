@@ -302,6 +302,8 @@ nonisolated enum VideoEngine {
     }()
 
     private static func locate(_ name: String) -> String? {
+        let managed = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DownloadFAF/Tools").appendingPathComponent(name).path
+        if FileManager.default.isExecutableFile(atPath: managed) { return managed }
         for directory in searchDirectories {
             let path = (directory as NSString).appendingPathComponent(name)
             if FileManager.default.isExecutableFile(atPath: path) {
@@ -319,12 +321,12 @@ nonisolated enum VideoEngine {
     static var processEnvironment: [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let current = environment["PATH"] ?? ""
-        environment["PATH"] = (searchDirectories + [current]).joined(separator: ":")
+        environment["PATH"] = ([FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/DownloadFAF/Tools").path] + searchDirectories + [current]).joined(separator: ":")
         return environment
     }
 
-    static let missingYTDLP = "yt-dlp was not found. Install it using Homebrew: brew install yt-dlp"
-    static let missingFFmpeg = "ffmpeg was not found. Install it using Homebrew: brew install ffmpeg"
+    static let missingYTDLP = "yt-dlp was not found. Open Settings → Dependencies → Install Dependencies"
+    static let missingFFmpeg = "ffmpeg was not found. Open Settings → Dependencies → Install Dependencies"
     static func verifySizes(
         in info: VideoInfo
     ) async -> VideoInfo {

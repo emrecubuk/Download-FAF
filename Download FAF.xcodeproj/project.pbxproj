@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		21530DC830891DDF00CC67FF /* DownloadQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21530DC730891DDF00CC67FF /* DownloadQueue.swift */; };
+		21530DCA30893B0B00CC67FF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21530DC930893B0B00CC67FF /* SettingsView.swift */; };
+		AFAFAFAF0000000000000001 /* DependencyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFAFAFAF0000000000000002 /* DependencyManager.swift */; };
 		21604E8A3084377200F4D6D7 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21604E893084377200F4D6D7 /* SidebarView.swift */; };
 		21604E8C308437BB00F4D6D7 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21604E8B308437BB00F4D6D7 /* MainView.swift */; };
 		21604E8E3084385D00F4D6D7 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21604E8D3084385D00F4D6D7 /* HomeView.swift */; };
@@ -19,8 +21,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		000000000000000000000120 /* Download AF.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Download AF.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000120 /* Download FAF.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Download FAF.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		21530DC730891DDF00CC67FF /* DownloadQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadQueue.swift; sourceTree = "<group>"; };
+		21530DC930893B0B00CC67FF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		AFAFAFAF0000000000000002 /* DependencyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DependencyManager.swift; sourceTree = "<group>"; };
 		21604E893084377200F4D6D7 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		21604E8B308437BB00F4D6D7 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		21604E8D3084385D00F4D6D7 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -54,7 +58,7 @@
 		000000000000000000000020 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000120 /* Download AF.app */,
+				000000000000000000000120 /* Download FAF.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +72,8 @@
 				21F35EB33086D10800129226 /* MyApp.swift */,
 				21F35EB83086D13E00129226 /* VideoEngine.swift */,
 				21F35EBA3086D33D00129226 /* NeonBackground.swift */,
+				21530DC930893B0B00CC67FF /* SettingsView.swift */,
+				AFAFAFAF0000000000000002 /* DependencyManager.swift */,
 			);
 			path = "Download FAF";
 			sourceTree = "<group>";
@@ -75,9 +81,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		000000000000000100000000 /* Download AF */ = {
+		000000000000000100000000 /* Download FAF */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "Download AF" */;
+			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "Download FAF" */;
 			buildPhases = (
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
@@ -85,9 +91,9 @@
 			);
 			buildRules = (
 			);
-			name = "Download AF";
+			name = "Download FAF";
 			productName = MyApp;
-			productReference = 000000000000000000000120 /* Download AF.app */;
+			productReference = 000000000000000000000120 /* Download FAF.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -119,7 +125,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				000000000000000100000000 /* Download AF */,
+				000000000000000100000000 /* Download FAF */,
 			);
 		};
 /* End PBXProject section */
@@ -140,6 +146,8 @@
 				21604E8C308437BB00F4D6D7 /* MainView.swift in Sources */,
 				21604E8E3084385D00F4D6D7 /* HomeView.swift in Sources */,
 				21F35EBB3086D33D00129226 /* NeonBackground.swift in Sources */,
+				21530DCA30893B0B00CC67FF /* SettingsView.swift in Sources */,
+				AFAFAFAF0000000000000001 /* DependencyManager.swift in Sources */,
 				21530DC830891DDF00CC67FF /* DownloadQueue.swift in Sources */,
 				21604E8A3084377200F4D6D7 /* SidebarView.swift in Sources */,
 				21F35EB93086D13E00129226 /* VideoEngine.swift in Sources */,
@@ -282,9 +290,10 @@
 			};
 			name = Release;
 		};
-		000000000000000111000000 /* Debug configuration for PBXNativeTarget "Download AF" */ = {
+		000000000000000111000000 /* Debug configuration for PBXNativeTarget "Download FAF" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
@@ -318,9 +327,10 @@
 			};
 			name = Debug;
 		};
-		000000000000000112000000 /* Release configuration for PBXNativeTarget "Download AF" */ = {
+		000000000000000112000000 /* Release configuration for PBXNativeTarget "Download FAF" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
@@ -365,11 +375,11 @@
 			);
 			defaultConfigurationName = Release;
 		};
-		000000000000000110000000 /* Build configuration list for PBXNativeTarget "Download AF" */ = {
+		000000000000000110000000 /* Build configuration list for PBXNativeTarget "Download FAF" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000111000000 /* Debug configuration for PBXNativeTarget "Download AF" */,
-				000000000000000112000000 /* Release configuration for PBXNativeTarget "Download AF" */,
+				000000000000000111000000 /* Debug configuration for PBXNativeTarget "Download FAF" */,
+				000000000000000112000000 /* Release configuration for PBXNativeTarget "Download FAF" */,
 			);
 			defaultConfigurationName = Release;
 		};

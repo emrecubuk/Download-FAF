@@ -188,6 +188,7 @@ struct SettingsView: View {
     @State private var confirmCache = false
     @State private var isClearingCache = false
     @State private var feedback: String?
+    @StateObject private var dependencies = DependencyManager.shared
     private let notifications = DownloadNotifications.shared
     private var accent: Color {
         colorScheme == .dark ? Color(nsColor: .systemBlue) : Color(red: 0.12, green: 0.42, blue: 0.94)
@@ -235,6 +236,48 @@ struct SettingsView: View {
                     status(notifications.permissionMessage)
                     if let error = notifications.lastError { status(error) }
                 }
+                section("Dependencies", icon: "shippingbox") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("yt-dlp").font(.system(size: 13, weight: .medium))
+                                Text(dependencies.ytDLPStatus).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: VideoEngine.toolPath == nil ? "xmark.circle" : "checkmark.circle.fill")
+                                .foregroundStyle(VideoEngine.toolPath == nil ? Color.secondary : Color.green)
+                        }
+                        HStack(spacing: 10) {
+                            Button("Install") { Task { await dependencies.install("yt-dlp") } }
+                                .disabled(dependencies.ytDLPBusy || dependencies.ytDLPInstalledByBrew)
+                            Button("Check & Update") { Task { await dependencies.checkAndUpdate("yt-dlp") } }
+                        }
+                        .disabled(dependencies.ytDLPBusy)
+                        if dependencies.ytDLPBusy { ProgressView().controlSize(.small) }
+                        status(dependencies.ytDLPMessage)
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("FFmpeg").font(.system(size: 13, weight: .medium))
+                                Text(dependencies.ffmpegStatus).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: VideoEngine.ffmpegPath == nil ? "xmark.circle" : "checkmark.circle.fill")
+                                .foregroundStyle(VideoEngine.ffmpegPath == nil ? Color.secondary : Color.green)
+                        }
+                        HStack(spacing: 10) {
+                            Button("Install") { Task { await dependencies.install("ffmpeg") } }
+                                .disabled(dependencies.ffmpegBusy || dependencies.ffmpegInstalledByBrew)
+                            Button("Check & Update") { Task { await dependencies.checkAndUpdate("ffmpeg") } }
+                        }
+                        .disabled(dependencies.ffmpegBusy)
+                        if dependencies.ffmpegBusy { ProgressView().controlSize(.small) }
+                        status(dependencies.ffmpegMessage)
+                    }
+                    status("Homebrew manages installations and updates. Existing tools outside Homebrew are preserved.")
+                }
                 section("Appearance", icon: "circle.lefthalf.filled") {
                     row("Theme", description: "Choose how Download FAF appears.") {
                         Picker("Theme", selection: Binding(
@@ -264,6 +307,7 @@ struct SettingsView: View {
         .task {
             refreshLoginStatus()
             await notifications.refreshAuthorization()
+            await dependencies.refresh()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -276,6 +320,12 @@ struct SettingsView: View {
         }
         .onChange(of: failureNotifications) { _, enabled in
             if enabled { Task { _ = await notifications.authorizeIfNeeded() } }
+        }
+        .alert("Homebrew Required", isPresented: $dependencies.showHomebrewPrompt) {
+            Button("Cancel", role: .cancel) {}
+            Button("Install Homebrew") { dependencies.installHomebrewWithConsent() }
+        } message: {
+            Text("Download FAF uses Homebrew to install yt-dlp and FFmpeg. Homebrew is not installed. Would you like to start the official Homebrew installer? Initial setup may require Terminal and an administrator password.")
         }
         .confirmationDialog("Clear download history?", isPresented: $confirmHistory, titleVisibility: .visible) {
             Button("Clear History", role: .destructive) {
